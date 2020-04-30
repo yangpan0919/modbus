@@ -7,9 +7,13 @@ import com.serotonin.modbus4j.exception.ModbusTransportException;
 import com.serotonin.modbus4j.ip.tcp.TcpMaster;
 import com.study.modbus.constant.Constants;
 import com.study.modbus.entity.DataInfo;
+import com.study.modbus.entity.Response;
 import com.study.modbus.util.ModbusUtils;
 import org.apache.log4j.Logger;
 import org.apache.log4j.MDC;
+import sun.security.util.BitArray;
+
+import java.util.Arrays;
 
 
 /**
@@ -29,6 +33,10 @@ public class ModbusConnection {
      * 事件触发回调接口
      */
     private ModbusEventDealer modbusEventDealer;
+    /**
+     * slaveId
+     */
+    private int slaveId;
 
     private TcpMaster master;
 
@@ -48,7 +56,8 @@ public class ModbusConnection {
      * @param initSleep         初始化才有效
      * @param initLinkCount     初始化才有效
      */
-    public ModbusConnection(String deviceCode, String ip, int port, ModbusEventDealer modbusEventDealer, long initSleep, int initLinkCount) {
+    public ModbusConnection(int slaveId, String deviceCode, String ip, int port, ModbusEventDealer modbusEventDealer, long initSleep, int initLinkCount) {
+        this.slaveId = slaveId;
         dataInfo = new DataInfo(ip, port, initSleep, initLinkCount, deviceCode);
         this.modbusEventDealer = modbusEventDealer;
         if (!doConnect()) {
@@ -102,16 +111,82 @@ public class ModbusConnection {
     /**
      * 执行命令
      *
-     * @param command
      * @return
      */
-    public synchronized void executeCommand(String command) {
+    public synchronized Response executeCommand(boolean type, int functionType, int offset, Object object, int dateType) {
 
+        Response response = new Response();
+        try {
+            if (master == null) {
+                response.setStatus(Constants.ERROR_RESPONSE);
+                response.setErrorDesc("master还没有与slave连接上");
+                return response;
+            }
 
+            if (type) {
+                //读
+                Number result = null;
+                switch (functionType) {
+                    case 1:
+                        result = ModbusUtils.readCoilStatus(master, slaveId, offset) ? 1 : 0;
+                        break;
+                    case 2:
+                        result = ModbusUtils.readInputStatus(master, slaveId, offset) ? 1 : 0;
+                        break;
+                    case 3:
+                        result = ModbusUtils.readHoldingRegister(master, slaveId, offset, dateType);
+                        break;
+                    case 4:
+                        result = ModbusUtils.readInputRegisters(master, slaveId, offset, dateType);
+                        break;
+                    default:
+                        response.setStatus(Constants.ERROR_RESPONSE);
+                        String desc = "没有该读类型的functionId:" + functionType;
+                        response.setErrorDesc(desc);
+                        logger.error(desc);
+                }
+                response.setResult(result);
+                return response;
+            }
+            //写
+            switch (functionType) {
+                case 1:
+                    ModbusUtils.writeCoils(master, slaveId, offset, (Boolean) object);
+                    break;
+                case 3:
+                    if (dateType == DataType.FOUR_BYTE_FLOAT) {
+                        short[] shorts = ModbusUtils.valueToShorts((Number) object);
+                        ModbusUtils.writeRegisters(master, slaveId, offset, shorts);
+                        break;
+                    } else if (dateType == DataType.FOUR_BYTE_INT_SIGNED) {
+                        ModbusUtils.writeRegister(master, slaveId, offset, (Integer) object);
+                        break;
+                    }
+                default:
+                    logger.error("没有该写类型的functionId:" + functionType + ":" + dateType);
+            }
+        } catch (ModbusTransportException e) {
+            //通信错误
+            response.setStatus(Constants.ERROR_RESPONSE);
+            response.setErrorDesc("通信错误");
+            logger.error("通信错误", e);
+        } catch (ErrorResponseException e) {
+            //返回结果失败
+            response.setStatus(Constants.ERROR_RESPONSE);
+            response.setErrorDesc("返回结果失败");
+            logger.error("返回结果失败", e);
+        } catch (Exception e) {
+            //没有预知的错误
+            response.setStatus(Constants.ERROR_RESPONSE);
+            response.setErrorDesc("没有预知的错误");
+            logger.error("没有预知的错误", e);
+        }
+
+        return response;
     }
 
-    public static void main(String[] args) throws ErrorResponseException, ModbusTransportException {
-        ModbusConnection modbusConnection = new ModbusConnection("test", "localhost", 502, null, 1000, -1);
+    public static void main(String[] args) throws ErrorResponseException, ModbusTransportException, InterruptedException {
+        ModbusConnection modbusConnection = new ModbusConnection(1, "test", "localhost", 502, null, 1000, -1);
         TcpMaster master = modbusConnection.getMaster();
 
 
@@ -127,15 +202,35 @@ public class ModbusConnection {
         number = ModbusUtils.readInputRegisters(master, 1, 0, DataType.TWO_BYTE_INT_SIGNED);
         System.out.println(number);
 
-
         boolean b = ModbusUtils.writeCoils(master, 1, 0, false, false, false);
         System.out.println(b);
 
-        boolean b1 = ModbusUtils.writeRegisters(master, 1, 3, (short) 2, (short) 2, (short) 2);
+        short[] shorts = ModbusUtils.valueToShorts(2.85f);
+        boolean b1 = ModbusUtils.writeRegisters(master, 1, 0, shorts);
         System.out.println(b1);
 
-        boolean b2 = ModbusUtils.writeMaskRegister(master, 1, 0,2, 2);
+        boolean b2 = ModbusUtils.writeRegister(master, 1, 2, 100);
         System.out.println(b2);
+
+        boolean b3 = ModbusUtils.writeMaskRegister(master, 1, 4, 1, 111);
+        System.out.println(b3);
+//        char[] chars = s.toCharArray();
+//        StringBuilder sb = new StringBuilder();
+//        for (int i = chars.length - 1; i >= 0; i--) {
+//            sb.append(chars[i]);
+//        }
+//        String s1 = sb.toString();
+//
+//        System.out.println(binToInt(s1));
+//
+//
+//        BitArray bitArray = new BitArray(22);
+//        System.out.println(bitArray.toString());
+//        boolean b2 = ModbusUtils.writeMaskRegister(master, 1, 0, 0, 1);
+//        b2 = ModbusUtils.writeMaskRegister(master, 1, 2, 0, -567775230);
+//        b2 = ModbusUtils.writeMaskRegister(master, 1, 4, 0, 1);
+//        System.out.println(b2);
+
 
     }
 

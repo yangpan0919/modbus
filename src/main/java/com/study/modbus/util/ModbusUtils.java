@@ -110,7 +110,24 @@ public class ModbusUtils {
     }
 
     /**
-     * 写 [05 WRITE  Coil Status]类型 模拟量数据
+     * 写 [5 WRITE  Coil Status]类型 模拟量数据
+     *
+     * @param slaveId slaveId
+     * @return 返回结果
+     * @throws ModbusTransportException 异常
+     * @throws ErrorResponseException   异常
+     */
+    public static boolean writeCoil(ModbusMaster master, int slaveId, int start, boolean values) throws ErrorResponseException, ModbusTransportException {
+
+        WriteCoilRequest request = new WriteCoilRequest(slaveId, start, values);
+        WriteCoilsResponse response = (WriteCoilsResponse) master.send(request);
+        if (response.isException())
+            throw new ErrorResponseException(request, response);
+        return true;
+    }
+
+    /**
+     * 写 [15 WRITE  Coils Status]类型 模拟量数据
      *
      * @param slaveId slaveId
      * @return 返回结果
@@ -126,7 +143,36 @@ public class ModbusUtils {
         return true;
     }
 
-    public static boolean writeRegisters(ModbusMaster master, int slaveId, int start, short... values) throws ModbusTransportException, ErrorResponseException {
+    /**
+     * 写 [6 WRITE  Register]类型 模拟量数据
+     * 写入整型数字
+     *
+     * @param slaveId slaveId
+     * @return 返回结果
+     * @throws ModbusTransportException 异常
+     * @throws ErrorResponseException   异常
+     */
+    public static boolean writeRegister(ModbusMaster master, int slaveId, int offset, int value) throws ModbusTransportException, ErrorResponseException {
+
+        WriteRegisterRequest request = new WriteRegisterRequest(slaveId, offset, value);
+        WriteRegisterResponse response = (WriteRegisterResponse) master.send(request);
+
+        if (response.isException())
+            throw new ErrorResponseException(request, response);
+        return true;
+    }
+
+    /**
+     * 写 [16 WRITE  Registers]类型 模拟量数据
+     * float类型 传输，符合IEEE 754 标准
+     *
+     * @param slaveId slaveId
+     * @param values  （float类型）占用了两个寄存器，两个表示一个
+     * @return 返回结果
+     * @throws ModbusTransportException 异常
+     * @throws ErrorResponseException   异常
+     */
+    public static boolean writeRegisters(ModbusMaster master, int slaveId, int start, short[] values) throws ModbusTransportException, ErrorResponseException {
         WriteRegistersRequest request = new WriteRegistersRequest(slaveId, start, values);
         WriteRegistersResponse response = (WriteRegistersResponse) master.send(request);
         if (response.isException())
@@ -135,6 +181,18 @@ public class ModbusUtils {
 
     }
 
+    /**
+     * 不知道如何使用
+     *
+     * @param master
+     * @param slaveId
+     * @param offset
+     * @param and
+     * @param or
+     * @return
+     * @throws ModbusTransportException
+     * @throws ErrorResponseException
+     */
     public static boolean writeMaskRegister(ModbusMaster master, int slaveId, int offset, int and, int or) throws ModbusTransportException, ErrorResponseException {
 
         WriteMaskRegisterRequest request = new WriteMaskRegisterRequest(slaveId, offset, and, or);
@@ -144,5 +202,14 @@ public class ModbusUtils {
         return true;
     }
 
-
+    /**
+     * 即将四个字节float的装成两个两字节的short
+     *
+     * @param value
+     * @return
+     */
+    public static short[] valueToShorts(Number value) {
+        int i = Float.floatToIntBits(value.floatValue());
+        return new short[]{(short) (i >> 16), (short) i};
+    }
 }
