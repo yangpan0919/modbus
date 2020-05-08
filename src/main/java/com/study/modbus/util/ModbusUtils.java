@@ -9,6 +9,8 @@ import com.serotonin.modbus4j.ip.IpParameters;
 import com.serotonin.modbus4j.locator.BaseLocator;
 import com.serotonin.modbus4j.msg.*;
 
+import java.util.Arrays;
+
 /**
  * modbus通讯工具类,采用modbus4j实现
  */
@@ -55,6 +57,49 @@ public class ModbusUtils {
         return value;
     }
 
+    /**
+     * 批量读取开关量  00001
+     *
+     * @param master
+     * @param slaveId
+     * @param start
+     * @param len
+     * @return
+     * @throws ModbusTransportException
+     * @throws ErrorResponseException
+     */
+    public static boolean[] readCoils(ModbusMaster master, int slaveId, int start, int len) throws ModbusTransportException, ErrorResponseException {
+
+        ReadCoilsRequest request = new ReadCoilsRequest(slaveId, start, len);
+        ReadCoilsResponse response = (ReadCoilsResponse) master.send(request);
+
+        boolean[] result = bytesToBoolean(response.getData(), len);
+        if (response.isException())
+            throw new ErrorResponseException(request, response);
+        return result;
+    }
+
+    /**
+     * 批量读取开关量  10001
+     *
+     * @param master
+     * @param slaveId
+     * @param start
+     * @param len
+     * @return
+     * @throws ModbusTransportException
+     * @throws ErrorResponseException
+     */
+    public static boolean[] readDiscreteInputs(ModbusMaster master, int slaveId, int start, int len) throws ModbusTransportException, ErrorResponseException {
+
+        ReadDiscreteInputsRequest request = new ReadDiscreteInputsRequest(slaveId, start, len);
+        ReadDiscreteInputsResponse response = (ReadDiscreteInputsResponse) master.send(request);
+
+        boolean[] result = bytesToBoolean(response.getData(), len);
+        if (response.isException())
+            throw new ErrorResponseException(request, response);
+        return result;
+    }
 
     /**
      * 读取[02 Input Status 1x]类型 开关数据
@@ -90,6 +135,52 @@ public class ModbusUtils {
         Number value = master.getValue(loc);
         return value;
     }
+
+    /**
+     * 批量读取浮点型数据 40001
+     *
+     * @param master
+     * @param slaveId
+     * @param start
+     * @param len
+     * @return
+     * @throws ModbusTransportException
+     * @throws ErrorResponseException
+     */
+    public static float[] readHoldingRegisters(ModbusMaster master, int slaveId, int start, int len) throws ModbusTransportException, ErrorResponseException {
+
+        ReadHoldingRegistersRequest request = new ReadHoldingRegistersRequest(slaveId, start, len);
+        ReadHoldingRegistersResponse response = (ReadHoldingRegistersResponse) master.send(request);
+        float[] floats = bytesToFloat(response.getData());
+//        float[] floats = shortsToFloat(response.getShortData());
+        if (response.isException())
+            throw new ErrorResponseException(request, response);
+
+        return floats;
+    }
+
+    /**
+     * 批量读取浮点型数据  30001
+     *
+     * @param master
+     * @param slaveId
+     * @param start
+     * @param len
+     * @return
+     * @throws ModbusTransportException
+     * @throws ErrorResponseException
+     */
+    public static float[] readInputRegistersRange(ModbusMaster master, int slaveId, int start, int len) throws ModbusTransportException, ErrorResponseException {
+        ReadInputRegistersRequest request = new ReadInputRegistersRequest(slaveId, start, len);
+        ReadInputRegistersResponse response = (ReadInputRegistersResponse) master.send(request);
+        float[] floats = bytesToFloat(response.getData());
+//        float[] floats = shortsToFloat(response.getShortData());
+        if (response.isException())
+            throw new ErrorResponseException(request, response);
+
+        return floats;
+    }
+
 
     /**
      * 读取[04 Input Registers 3x]类型 模拟量数据
@@ -212,4 +303,50 @@ public class ModbusUtils {
         int i = Float.floatToIntBits(value.floatValue());
         return new short[]{(short) (i >> 16), (short) i};
     }
+
+    /**
+     * 将short 装换成float
+     *
+     * @param shorts
+     * @return
+     */
+    public static float[] shortsToFloat(short[] shorts) {
+        float[] floats = new float[shorts.length / 2];
+        for (int i = 0; i < shorts.length; i += 2) {
+            floats[i / 2] = Float.intBitsToFloat((shorts[i] & 65535) << 16 | (shorts[i + 1] & 65535));
+        }
+        return floats;
+    }
+
+    /**
+     * 将byte 装换成float
+     *
+     * @param data
+     * @return
+     */
+    public static float[] bytesToFloat(byte[] data) {
+        float[] floats = new float[data.length / 4];
+        for (int i = 0, index = 0; i < data.length; i += 4, index++) {
+            floats[index] = Float.intBitsToFloat((data[i] & 255) << 24 | (data[i + 1] & 255) << 16 | (data[i + 2] & 255) << 8 | data[i + 3] & 255);
+        }
+        return floats;
+    }
+
+    /**
+     * 将byte 装换成 boolean
+     *
+     * @param data
+     * @param len  需要的长度
+     * @return
+     */
+    public static boolean[] bytesToBoolean(byte[] data, int len) {
+
+        boolean[] result = new boolean[len];
+        for (int i = 0; i < len; i++) {
+            result[i] = (data[i / 8] >> (i % 8) & 1) == 1;
+        }
+        return result;
+    }
+
+
 }
