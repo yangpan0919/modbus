@@ -1,5 +1,7 @@
 package com.study.modbus;
 
+import cn.tzauto.isecs.api.MsgListener;
+import com.google.gson.Gson;
 import com.serotonin.modbus4j.BatchRead;
 import com.serotonin.modbus4j.BatchResults;
 import com.serotonin.modbus4j.code.DataType;
@@ -11,12 +13,17 @@ import com.serotonin.modbus4j.locator.BaseLocator;
 import com.study.modbus.constant.Constants;
 import com.study.modbus.entity.DataInfo;
 import com.study.modbus.entity.Response;
+import com.study.modbus.entity.WriteBean;
 import com.study.modbus.util.ModbusUtils;
 import org.apache.log4j.Logger;
 import org.apache.log4j.MDC;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 
 /**
@@ -31,7 +38,7 @@ public class ModbusConnection {
      * 基本信息
      */
     private DataInfo dataInfo;
-
+    Gson gson = new Gson();
     /**
      * 事件触发回调接口
      */
@@ -42,6 +49,19 @@ public class ModbusConnection {
     private int slaveId;
 
     private TcpMaster master;
+
+    MsgListener listener;
+
+    final ReentrantLock lock = new ReentrantLock();
+
+    AtomicBoolean needWrite = new AtomicBoolean(false);
+
+    /**
+     * Condition for waiting puts
+     */
+    private final Condition writing = lock.newCondition();
+    private final Condition read = lock.newCondition();
+
 
     public BatchRead<String> batchRead = new BatchRead();
 
@@ -61,13 +81,141 @@ public class ModbusConnection {
      * @param initSleep         初始化才有效
      * @param initLinkCount     初始化才有效
      */
-    public ModbusConnection(int slaveId, String deviceCode, String ip, int port, ModbusEventDealer modbusEventDealer, long initSleep, int initLinkCount) {
+    public ModbusConnection(int slaveId, String deviceCode, String ip, int port, ModbusEventDealer modbusEventDealer, long initSleep, int initLinkCount, MsgListener listener) {
+        this.listener = listener;
         this.slaveId = slaveId;
         dataInfo = new DataInfo(ip, port, initSleep, initLinkCount, deviceCode);
         this.modbusEventDealer = modbusEventDealer;
         if (!doConnect()) {
             linkTask();
         }
+
+        new Thread(() -> {
+            final ReentrantLock lock = this.lock;
+            try {
+                Thread.sleep(1000L);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            while (true) {
+                //实时获取数据
+                try {
+                    if (needWrite.get()) {
+                        lock.lock();
+                        try {
+                            //有写的操作，等待写的操作完成后，再进行读(插队)
+                            writing.signal();
+                            read.await();
+                            if (needWrite.get()) {
+                                //还有别的写操作需要执行
+                                continue;
+                            }
+                        } finally {
+                            lock.unlock();
+                        }
+
+                    }
+                    BatchResults<String> stringBatchResults = batchRead();
+                    String s = gson.toJson(stringBatchResults);
+                    if ("{\"data\":{}}".equals(s)) {
+                        throw new Exception("空的内容");
+                    }
+                    listener.dealMultMsg(s);
+
+                    //连接上了
+                    modbusEventDealer.gotoComplete();
+                } catch (Exception e) {
+                    logger.info("实时获取消息失败");
+                    //断线了
+                    modbusEventDealer.doNetBroken();
+                    try {
+                        Thread.sleep(500L);
+                    } catch (InterruptedException ex) {
+                        ex.printStackTrace();
+                    }
+
+                }
+            }
+        }).start();
+
+    }
+
+    /**
+     * 进行读操作
+     */
+    public synchronized BatchResults<String> readData() {
+        BatchResults<String> results = null;
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            needWrite.set(true);
+            writing.await();
+
+            results = batchRead();
+            String s = gson.toJson(results);
+            if ("{\"data\":{}}".equals(s)) {
+                return null;
+            }
+
+            listener.dealMultMsg(s);
+        } catch (Exception e) {
+            logger.error("读取内容失败", e);
+        } finally {
+            needWrite.set(false);
+            read.signal();
+            lock.unlock();
+        }
+
+        return results;
+
+
+    }
+
+    /**
+     * 进行写操作
+     */
+    public synchronized void writeData(List<WriteBean> list) {
+        final ReentrantLock lock = this.lock;
+        lock.lock();
+        try {
+            //进行写操作
+            needWrite.set(true);
+            writing.await();
+            //进行处理
+
+            for (WriteBean writeBean : list) {
+                String addr = writeBean.getAddr();
+                String type = addr.substring(0, 1);
+                int offset = Integer.parseInt(addr.substring(1));
+                //写单值
+                switch (type) {
+                    case "0":
+                        ModbusUtils.writeCoils(master, slaveId, offset, (Boolean) writeBean.getData());
+                        break;
+                    case "4":
+                        if (writeBean.getDataType() == DataType.FOUR_BYTE_FLOAT) {//float
+                            short[] shorts = ModbusUtils.valueToShorts((Number) writeBean.getData());
+                            ModbusUtils.writeRegisters(master, slaveId, offset, shorts);
+                            break;
+                        } else if (writeBean.getDataType() == DataType.FOUR_BYTE_INT_SIGNED) {//int
+                            ModbusUtils.writeRegister(master, slaveId, offset, (Integer) writeBean.getData());
+                            break;
+                        }
+                    default:
+                        logger.error("没有该写类型的functionId:" + type + ":" + writeBean.getDataType());
+                }
+
+            }
+
+
+        } catch (Exception e) {
+            logger.error("写数据出现问题：" + list, e);
+        } finally {
+            needWrite.set(false);
+            read.signal();
+            lock.unlock();
+        }
+
 
     }
 
@@ -104,8 +252,6 @@ public class ModbusConnection {
         boolean result = false;
         try {
             this.master = (TcpMaster) ModbusUtils.getMaster(dataInfo.getIp(), dataInfo.getPort());
-//            //表示初始连接上了
-//            modbusEventDealer.gotoComplete();
             result = true;
         } catch (ModbusInitException e) {
         }
@@ -216,7 +362,13 @@ public class ModbusConnection {
     }
 
     public static void main(String[] args) throws ErrorResponseException, ModbusTransportException, InterruptedException {
-        ModbusConnection modbusConnection = new ModbusConnection(1, "test", "192.168.2.250", 502, null, 1000, -1);
+        String s = "{}";
+
+        if ("{}".equals(s)) {
+            System.out.println("1111111111111111111111111");
+
+        }
+        ModbusConnection modbusConnection = new ModbusConnection(1, "test", "192.168.2.250", 502, null, 1000, -1, null);
         TcpMaster master = modbusConnection.getMaster();
 
 
@@ -321,9 +473,6 @@ public class ModbusConnection {
         boolean[] booleans1 = ModbusUtils.readDiscreteInputs(master, 1, 0, 4);
         boolean[] booleans = ModbusUtils.readCoils(master, 1, 0, 4);
         float[] floats1 = ModbusUtils.readInputRegistersRange(master, 1, 0, 4);
-        ModbusConnection modbusConnection2 = new ModbusConnection(1, "test", "192.168.2.250", 502, null, 1000, -1);
-        TcpMaster master2 = modbusConnection2.getMaster();
-        float[] floats = ModbusUtils.readHoldingRegisters(master2, 1, 0, 10);
 
 //        Boolean aBoolean = ModbusUtils.readCoilStatus(master, 1, 1);
 //        System.out.println(aBoolean);
@@ -345,21 +494,6 @@ public class ModbusConnection {
                 }
                 System.out.print(LocalDateTime.now());
                 System.out.println("---" + number);
-            }).start();
-
-        }
-        for (int i = 0; i < 10; i++) {
-            new Thread(() -> {
-                float[] floats2 = null;
-                try {
-                    floats2 = ModbusUtils.readHoldingRegisters(master2, 1, 0, 10);
-                } catch (ModbusTransportException e) {
-                    e.printStackTrace();
-                } catch (ErrorResponseException e) {
-                    e.printStackTrace();
-                }
-                System.out.print(LocalDateTime.now());
-                System.out.println("+++" + Arrays.toString(floats2));
             }).start();
 
         }
