@@ -160,6 +160,27 @@ public class ModbusUtils {
     }
 
     /**
+     * 获取byte字节 数组
+     *
+     * @param master
+     * @param slaveId
+     * @param start
+     * @param len
+     * @return
+     * @throws ModbusTransportException
+     * @throws ErrorResponseException
+     */
+    public static byte[] readHoldingRegistersGetByte(ModbusMaster master, int slaveId, int start, int len) throws ModbusTransportException, ErrorResponseException {
+
+        ReadHoldingRegistersRequest request = new ReadHoldingRegistersRequest(slaveId, start, len);
+        ReadHoldingRegistersResponse response = (ReadHoldingRegistersResponse) master.send(request);
+        if (response.isException())
+            throw new ErrorResponseException(request, response);
+        return response.getData();
+
+    }
+
+    /**
      * 批量读取浮点型数据  30001
      *
      * @param master
