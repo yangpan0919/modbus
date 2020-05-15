@@ -15,7 +15,7 @@ import com.study.modbus.ModbusConnection;
 import java.util.HashMap;
 
 /**
- * modbus通讯工具类,采用modbus4j实现
+ * modbus通讯工具类,采用modbus4j实现,没用到
  */
 public class Modbus4jUtils {
     /**

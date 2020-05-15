@@ -145,7 +145,7 @@ public class ModbusConnection {
                     listener.dealMultMsg(s);
 
                     //连接上了
-//                    modbusEventDealer.gotoComplete();
+                    modbusEventDealer.gotoComplete();
                 } catch (Exception e) {
                     offline = true;
                     logger.info("实时获取消息失败");
@@ -166,7 +166,7 @@ public class ModbusConnection {
     /**
      * 进行读操作
      */
-    public synchronized BatchResults<String> readData(BatchRead<String> batchRead) {
+    public synchronized BatchResults<String> readData(BatchRead<String> batchRead) throws InterruptedException, OfflineException, ModbusTransportException, ErrorResponseException {
         BatchResults<String> results = null;
         final ReentrantLock lock = this.lock;
         lock.lock();
@@ -180,28 +180,23 @@ public class ModbusConnection {
 
             results = batchRead(batchRead);
             String s = gson.toJson(results);
-            logger.info("toString:" + results.toString());
+
             if ("{\"data\":{}}".equals(s)) {
                 return null;
             }
             return results;
-        } catch (Exception e) {
-            logger.error("读取内容失败", e);
         } finally {
             needWrite.set(false);
             read.signal();
             lock.unlock();
         }
 
-        return null;
-
-
     }
 
     /**
      * 进行写操作
      */
-    public synchronized boolean writeData(List<WriteBean> list) throws OfflineException {
+    public synchronized boolean writeData(List<WriteBean> list) throws OfflineException, InterruptedException, ModbusTransportException, ErrorResponseException {
         final ReentrantLock lock = this.lock;
         lock.lock();
         try {
@@ -238,17 +233,12 @@ public class ModbusConnection {
                 }
 
             }
-
-            return true;
-        } catch (Exception e) {
-            logger.error("写数据出现问题：" + list, e);
         } finally {
             needWrite.set(false);
             read.signal();
             lock.unlock();
         }
-        return false;
-
+        return true;
     }
 
     /**
